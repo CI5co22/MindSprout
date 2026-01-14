@@ -1,0 +1,5 @@
+{
+  "name": "MindSprout - Spaced Repetition",
+  "description": "Una aplicación de repetición espaciada minimalista y potente diseñada para el aprendizaje eficiente con algoritmos SM-2 y persistencia offline.",
+  "requestFramePermissions": []
+}
