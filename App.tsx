@@ -91,6 +91,12 @@ const App: React.FC = () => {
     }
   };
 
+  const handleSwapInputs = () => {
+    const temp = cardFront;
+    setCardFront(cardBack);
+    setCardBack(temp);
+  };
+
   const handleAnswer = async (difficulty: Difficulty) => {
     const currentCard = studySession[0];
     const updatedCard = calculateNextReview(currentCard, difficulty);
@@ -98,12 +104,6 @@ const App: React.FC = () => {
     setCards(prev => prev.map(c => c.id === updatedCard.id ? updatedCard : c));
     setStudySession(prev => prev.slice(1));
     setSessionDoneCount(prev => prev + 1);
-  };
-
-  const handleSwapInputs = () => {
-    const temp = cardFront;
-    setCardFront(cardBack);
-    setCardBack(temp);
   };
 
   const saveCard = async () => {
@@ -290,7 +290,7 @@ const App: React.FC = () => {
                 <h2 className="text-2xl font-black text-slate-800 tracking-tight">Configuración</h2>
                 <div className="bg-white p-8 rounded-[3rem] space-y-4 border border-slate-100">
                   <Button onClick={() => Notification.requestPermission()} variant="secondary" className="w-full">Probar Notificaciones</Button>
-                  <p className="text-[10px] text-slate-400 text-center font-black uppercase opacity-40">MindSprout 4.1.0 • Interfaz Pulida</p>
+                  <p className="text-[10px] text-slate-400 text-center font-black uppercase opacity-40">MindSprout 4.2.0 • UX Refinada</p>
                 </div>
               </div>
             )}
@@ -311,18 +311,30 @@ const App: React.FC = () => {
       <Modal isOpen={modalOpen === 'session_start'} onClose={() => setModalOpen('none')} title="Preparar Sesión">
         <div className="space-y-6 mt-4">
           <div className="p-6 bg-slate-50 rounded-[2rem] text-center">
-            <p className="text-slate-500 font-bold text-sm">Tarjetas listas para estudiar: {selectedDeckCards.due.length + selectedDeckCards.new.length}</p>
+            <p className="text-slate-500 font-bold text-sm">
+              Tarjetas disponibles: {selectedDeckCards.due.length + selectedDeckCards.new.length}
+            </p>
           </div>
-          <div className="grid gap-3">
-            <button onClick={() => handleStartSession('reveal')} className="p-6 bg-white rounded-[2rem] border-2 border-slate-100 hover:border-indigo-500 text-left transition-all group">
-              <h4 className="font-black text-slate-800 text-lg group-hover:text-indigo-600">Modo Solo Ver</h4>
-              <p className="text-xs text-slate-400 font-medium">Evalúa tu respuesta mentalmente.</p>
-            </button>
-            <button onClick={() => handleStartSession('type')} className="p-6 bg-white rounded-[2rem] border-2 border-slate-100 hover:border-indigo-500 text-left transition-all group">
-              <h4 className="font-black text-slate-800 text-lg group-hover:text-indigo-600">Modo Escribir</h4>
-              <p className="text-xs text-slate-400 font-medium">Validación estricta con teclado.</p>
-            </button>
-          </div>
+
+          {(selectedDeckCards.due.length + selectedDeckCards.new.length) > 0 ? (
+            <div className="grid gap-3">
+              <button onClick={() => handleStartSession('reveal')} className="p-6 bg-white rounded-[2rem] border-2 border-slate-100 hover:border-indigo-500 text-left transition-all group">
+                <h4 className="font-black text-slate-800 text-lg group-hover:text-indigo-600">Modo Solo Ver</h4>
+                <p className="text-xs text-slate-400 font-medium">Evalúa tu respuesta mentalmente.</p>
+              </button>
+              <button onClick={() => handleStartSession('type')} className="p-6 bg-white rounded-[2rem] border-2 border-slate-100 hover:border-indigo-500 text-left transition-all group">
+                <h4 className="font-black text-slate-800 text-lg group-hover:text-indigo-600">Modo Escribir</h4>
+                <p className="text-xs text-slate-400 font-medium">Validación estricta con teclado.</p>
+              </button>
+            </div>
+          ) : (
+            <div className="p-8 text-center space-y-4 animate-in zoom-in duration-300">
+               <div className="text-4xl">🎉</div>
+               <h4 className="font-black text-slate-800 text-lg">¡Todo al día!</h4>
+               <p className="text-sm text-slate-500 font-medium leading-relaxed">No tienes tarjetas para repasar en este mazo ahora mismo.</p>
+               <Button onClick={() => setModalOpen('card')} variant="secondary" className="w-full">Añadir Tarjetas</Button>
+            </div>
+          )}
         </div>
       </Modal>
 
