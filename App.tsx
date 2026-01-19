@@ -12,7 +12,7 @@ import {
 } from 'recharts';
 import { 
   Home, Library as LibraryIcon, BarChart2, Trash2, Edit2, 
-  ArrowLeftRight, Plus, ChevronRight, AlertCircle, Info, Layout,
+  ArrowLeftRight, Plus, ChevronRight, Layout,
   Share2, Download, FilePlus2, ArrowRight
 } from 'lucide-react';
 
@@ -110,12 +110,6 @@ const App: React.FC = () => {
       setIsStudying(true);
       setModalOpen('none');
     }
-  };
-
-  const handleSwapInputs = () => {
-    const temp = cardFront;
-    setCardFront(cardBack);
-    setCardBack(temp);
   };
 
   const handleAnswer = async (difficulty: Difficulty) => {
@@ -229,17 +223,10 @@ const App: React.FC = () => {
     setModalOpen('none');
   };
 
-  const deleteCard = async (e: React.MouseEvent, id: string) => {
-    e.stopPropagation();
-    e.preventDefault();
+  const deleteCard = async (id: string) => {
     if (!window.confirm("¿Borrar esta tarjeta permanentemente?")) return;
-    try {
-      await dbInstance.delete('flashcards', id);
-      setCards(prev => prev.filter(c => c.id !== id));
-    } catch (err) {
-      console.error("Error al borrar tarjeta:", err);
-      alert("No se pudo borrar la tarjeta.");
-    }
+    await dbInstance.delete('flashcards', id);
+    setCards(prev => prev.filter(c => c.id !== id));
   };
 
   const handleExportDeckAction = () => {
@@ -264,25 +251,45 @@ const App: React.FC = () => {
     const reader = new FileReader();
     reader.onload = async (e) => {
       try {
-        const data = JSON.parse(e.target?.result as string);
-        if (!data.deck || !Array.isArray(data.cards)) throw new Error("Formato inválido");
+        let text = e.target?.result as string;
+        
+        // LIMPIEZA PARA SAFARI/IPHONE:
+        // 1. Quitar caracteres invisibles (BOM)
+        text = text.replace(/^\uFEFF/, '');
+        // 2. Normalizar comillas "inteligentes" de iOS por comas rectas si las hubiera
+        text = text.replace(/[\u201C\u201D]/g, '"').replace(/[\u2018\u2019]/g, "'");
+
+        const data = JSON.parse(text);
+        if (!data.deck || !Array.isArray(data.cards)) throw new Error("Formato inválido: Falta 'deck' o 'cards'");
+
         const newDeckId = Math.random().toString(36).substr(2, 9);
         const newDeck: Deck = { ...data.deck, id: newDeckId, createdAt: Date.now() };
         await dbInstance.put('decks', newDeck);
         setDecks(prev => [...prev, newDeck]);
+        
         const newCardsPromises = data.cards.map(async (card: Flashcard) => {
-          const newCard: Flashcard = { ...card, id: Math.random().toString(36).substr(2, 9), deckId: newDeckId, nextReview: Date.now() };
+          const newCard: Flashcard = { 
+            ...card, 
+            id: Math.random().toString(36).substr(2, 9), 
+            deckId: newDeckId, 
+            nextReview: Date.now(),
+            repetition: 0,
+            interval: 0,
+            history: []
+          };
           await dbInstance.put('flashcards', newCard);
           return newCard;
         });
+        
         const newlyImportedCards = await Promise.all(newCardsPromises);
         setCards(prev => [...prev, ...newlyImportedCards]);
         alert(`Mazo "${newDeck.name}" importado con éxito.`);
-      } catch (err) {
-        alert("Error al importar el mazo.");
+      } catch (err: any) {
+        console.error("Error al importar:", err);
+        alert("Error al importar el mazo. Verifica que el archivo sea un JSON válido.");
       }
     };
-    reader.readAsText(file);
+    reader.readAsText(file, 'UTF-8');
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
@@ -292,7 +299,14 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row safe-area-bottom overflow-hidden">
-      <input type="file" ref={fileInputRef} className="hidden" accept=".sprout,.json" onChange={handleImportFile} />
+      {/* Input de archivos con 'accept' ampliado para iOS */}
+      <input 
+        type="file" 
+        ref={fileInputRef} 
+        className="hidden" 
+        accept=".json,.sprout,application/json" 
+        onChange={handleImportFile} 
+      />
 
       {/* SIDEBAR */}
       {!isStudying && (
@@ -401,7 +415,7 @@ const App: React.FC = () => {
                         <div key={card.id} className="p-6 bg-white rounded-[2.5rem] border border-slate-100 flex flex-col gap-3 shadow-sm animate-in slide-in-from-bottom-2 md:hover:shadow-md transition-shadow">
                           <div className="flex justify-between items-center mb-1"><span className="text-[10px] font-black bg-indigo-50 text-indigo-500 px-3 py-1 rounded-full uppercase tracking-tight">{card.type}</span><div className="flex gap-4">
                             <button type="button" onClick={() => handleEditCard(card)} className="text-indigo-500 text-[11px] font-black uppercase flex items-center gap-1.5 hover:scale-105 transition-transform p-1"><Edit2 size={14} /> Editar</button>
-                            <button type="button" onClick={(e) => deleteCard(e, card.id)} className="text-rose-400 text-[11px] font-black uppercase flex items-center gap-1.5 hover:scale-105 transition-transform p-1"><Trash2 size={14} /> Borrar</button>
+                            <button type="button" onClick={() => deleteCard(card.id)} className="text-rose-400 text-[11px] font-black uppercase flex items-center gap-1.5 hover:scale-105 transition-transform p-1"><Trash2 size={14} /> Borrar</button>
                           </div></div>
                           <p className="font-bold text-slate-800 text-lg leading-snug">{card.type === 'cloze' ? card.question.replace(/\{\{(.*?)\}\}/g, '$1') : card.question}</p>
                           <p className="text-slate-400 text-sm font-medium border-t border-slate-50 pt-3">{card.type === 'cloze' ? `Respuesta: ${card.answer}` : card.answer}</p>
@@ -450,10 +464,10 @@ const App: React.FC = () => {
             {cardType === 'normal' ? (
               <div className="space-y-2 animate-in slide-in-from-right-2">
                 <div className="relative group">
-                  <textarea placeholder="Frente (Pregunta)" className="w-full p-4 rounded-xl bg-slate-50 border-2 border-transparent focus:border-indigo-100 outline-none min-h-[70px] font-bold text-slate-800 text-sm shadow-inner resize-none" value={cardFront} onChange={e => setCardFront(e.target.value)}/>
-                  <button type="button" onClick={handleSwapInputs} className="absolute -bottom-2 right-4 bg-white p-1.5 rounded-full shadow-md border border-slate-100 text-indigo-500 active:scale-90 transition-all z-10"><ArrowLeftRight size={14} /></button>
+                  <textarea placeholder="Pregunta (Cara A)" className="w-full p-4 rounded-xl bg-slate-50 border-2 border-transparent focus:border-indigo-100 outline-none min-h-[70px] font-bold text-slate-800 text-sm shadow-inner resize-none" value={cardFront} onChange={e => setCardFront(e.target.value)}/>
+                  <button type="button" onClick={() => { const tmp = cardFront; setCardFront(cardBack); setCardBack(tmp); }} className="absolute -bottom-2 right-4 bg-white p-1.5 rounded-full shadow-md border border-slate-100 text-indigo-500 active:scale-90 transition-all z-10"><ArrowLeftRight size={14} /></button>
                 </div>
-                <textarea placeholder="Reverso (Respuesta)" className="w-full p-4 rounded-xl bg-slate-50 border-2 border-transparent focus:border-indigo-100 outline-none min-h-[70px] font-bold text-slate-800 text-sm shadow-inner resize-none" value={cardBack} onChange={e => setCardBack(e.target.value)}/>
+                <textarea placeholder="Respuesta (Cara B)" className="w-full p-4 rounded-xl bg-slate-50 border-2 border-transparent focus:border-indigo-100 outline-none min-h-[70px] font-bold text-slate-800 text-sm shadow-inner resize-none" value={cardBack} onChange={e => setCardBack(e.target.value)}/>
               </div>
             ) : (
               <div className="space-y-3 animate-in slide-in-from-left-2">
@@ -478,7 +492,7 @@ const App: React.FC = () => {
       {/* MODAL: NEW DECK */}
       <Modal isOpen={modalOpen === 'deck'} onClose={() => setModalOpen('none')} title="Nuevo Mazo"><div className="space-y-8 mt-6"><div className="space-y-3"><label className="text-[11px] font-black text-slate-400 uppercase tracking-widest px-2">Nombre</label><input placeholder="Vocabulario..." className="w-full p-6 rounded-3xl bg-slate-50 border-none text-2xl font-black text-slate-800 focus:ring-2 focus:ring-indigo-100 outline-none shadow-inner" value={newDeckName} onChange={e => setNewDeckName(e.target.value)}/></div><div className="space-y-3"><label className="text-[11px] font-black text-slate-400 uppercase tracking-widest px-2">Color</label><div className="grid grid-cols-5 gap-4 pt-2">{['bg-indigo-500', 'bg-rose-500', 'bg-amber-500', 'bg-emerald-500', 'bg-slate-800'].map(color => (<button key={color} onClick={() => setNewDeckColor(color)} className={`aspect-square rounded-2xl ${color} transition-all ${newDeckColor === color ? 'ring-4 ring-indigo-200 scale-110 shadow-lg' : 'opacity-40 scale-90'}`}></button>))}</div></div><Button onClick={saveDeck} className="w-full py-6 text-base font-black uppercase tracking-widest rounded-full shadow-xl shadow-indigo-100 mt-4" disabled={!newDeckName}>Confirmar Mazo</Button></div></Modal>
 
-      {/* MODAL: SETTINGS & DELETE FEEDBACK */}
+      {/* MODAL: SETTINGS */}
       <Modal isOpen={modalOpen === 'deck_settings'} onClose={() => setModalOpen('none')} title="Configurar Mazo">
         <div className="mt-4 space-y-6">
           <div className="space-y-2">
