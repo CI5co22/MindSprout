@@ -214,13 +214,26 @@ const App: React.FC = () => {
   };
 
   const deleteDeck = async (id: string) => {
-    const deckCardsCount = cards.filter(c => c.deckId === id).length;
-    if (deckCardsCount > 0) return;
+    // Definimos el mensaje claro y explicativo solicitado
+    const message = "¿Estás seguro? Al borrar el mazo se eliminarán todas las flashcards que contiene y esta acción es irreversible.";
     
-    if (!window.confirm("¿Seguro que quieres borrar este mazo?")) return;
-    await dbInstance.delete('decks', id);
-    setDecks(prev => prev.filter(d => d.id !== id));
-    setModalOpen('none');
+    if (window.confirm(message)) {
+      // 1. Borrar todas las tarjetas asociadas a este mazo en la DB
+      const deckCards = cards.filter(c => c.deckId === id);
+      for (const card of deckCards) {
+        await dbInstance.delete('flashcards', card.id);
+      }
+
+      // 2. Borrar el mazo en la DB
+      await dbInstance.delete('decks', id);
+
+      // 3. Actualizar estados locales para reflejar los cambios inmediatamente
+      setDecks(prev => prev.filter(d => d.id !== id));
+      setCards(prev => prev.filter(c => c.deckId !== id));
+      
+      // 4. Cerrar el modal
+      setModalOpen('none');
+    }
   };
 
   const deleteCard = async (id: string) => {
@@ -252,11 +265,7 @@ const App: React.FC = () => {
     reader.onload = async (e) => {
       try {
         let text = e.target?.result as string;
-        
-        // LIMPIEZA PARA SAFARI/IPHONE:
-        // 1. Quitar caracteres invisibles (BOM)
         text = text.replace(/^\uFEFF/, '');
-        // 2. Normalizar comillas "inteligentes" de iOS por comas rectas si las hubiera
         text = text.replace(/[\u201C\u201D]/g, '"').replace(/[\u2018\u2019]/g, "'");
 
         const data = JSON.parse(text);
@@ -295,11 +304,8 @@ const App: React.FC = () => {
 
   if (isLoading) return <div className="h-screen flex items-center justify-center bg-white"><div className="animate-pulse text-indigo-500 font-black text-xl tracking-tighter">MindSprout</div></div>;
 
-  const deckCardsCountForSelected = cards.filter(c => c.deckId === selectedDeckId).length;
-
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row safe-area-bottom overflow-hidden">
-      {/* Input de archivos con 'accept' universal para evitar el bloqueo en iOS */}
       <input 
         type="file" 
         ref={fileInputRef} 
@@ -448,10 +454,9 @@ const App: React.FC = () => {
         <nav className="md:hidden fixed bottom-0 left-0 right-0 glass-panel border-t border-slate-100 flex justify-around py-4 pb-10 px-6 z-20"><button onClick={() => setActiveTab('home')} className={`flex flex-col items-center gap-1.5 transition-all ${activeTab === 'home' ? 'text-indigo-600 scale-110' : 'text-slate-300'}`}><Home size={22} /><span className="text-[9px] font-black uppercase tracking-tighter">Inicio</span></button><button onClick={() => setActiveTab('library')} className={`flex flex-col items-center gap-1.5 transition-all ${activeTab === 'library' ? 'text-indigo-600 scale-110' : 'text-slate-300'}`}><LibraryIcon size={22} /><span className="text-[9px] font-black uppercase tracking-tighter">Biblio</span></button><button onClick={() => setActiveTab('stats')} className={`flex flex-col items-center gap-1.5 transition-all ${activeTab === 'stats' ? 'text-indigo-600 scale-110' : 'text-slate-300'}`}><BarChart2 size={22} /><span className="text-[9px] font-black uppercase tracking-tighter">Stats</span></button></nav>
       )}
 
-      {/* MODAL: EXPORT */}
+      {/* MODALS */}
       <Modal isOpen={modalOpen === 'export_deck'} onClose={() => setModalOpen('none')} title="Exportar Mazo"><div className="space-y-8 mt-6 text-center"><div className="mx-auto w-28 h-28 bg-emerald-50 rounded-[3rem] flex items-center justify-center text-emerald-500 shadow-xl shadow-emerald-50/50 border border-emerald-100"><Download size={48} strokeWidth={2} /></div><div className="space-y-3"><h4 className="text-2xl font-black text-slate-800 tracking-tight">Listo para descargar</h4><p className="text-slate-500 font-medium text-sm leading-relaxed max-w-[280px] mx-auto">Se generará un archivo <strong className="text-slate-800">.sprout</strong> con el mazo "{deckToExport?.name}" y sus tarjetas.</p></div><div className="space-y-3"><Button onClick={handleExportDeckAction} className="w-full py-6 text-base font-black uppercase tracking-widest rounded-full shadow-2xl shadow-emerald-100 flex items-center justify-center gap-3 bg-emerald-500 hover:bg-emerald-600"><Download size={20} strokeWidth={3} />Descargar Archivo</Button></div></div></Modal>
 
-      {/* MODAL: COMPACT CARD FORM */}
       <Modal isOpen={modalOpen === 'card'} onClose={() => { setModalOpen('none'); resetCardForm(); }} title={editingCardId ? "Editar Tarjeta" : "Nueva Tarjeta"}>
         {decks.length === 0 ? (
           <div className="py-12 text-center space-y-8 animate-in zoom-in duration-300"><div className="mx-auto w-24 h-24 bg-indigo-50 rounded-[2.5rem] flex items-center justify-center text-indigo-500 shadow-xl shadow-indigo-50 border border-indigo-100/50"><Layout size={40} strokeWidth={2.5} /></div><div className="space-y-4"><h4 className="text-2xl font-black text-slate-800 tracking-tight">¡Crea tu primer mazo!</h4><p className="text-slate-400 font-medium text-sm max-w-[280px] mx-auto leading-relaxed">Necesitas un lugar donde guardar tus tarjetas.</p></div><Button onClick={() => setModalOpen('deck')} className="w-full py-6 text-base font-black uppercase tracking-widest rounded-full shadow-2xl shadow-indigo-100 flex items-center justify-center gap-3"><Plus size={20} strokeWidth={3} />Empezar ahora</Button></div>
@@ -489,17 +494,14 @@ const App: React.FC = () => {
         )}
       </Modal>
 
-      {/* MODAL: NEW DECK */}
       <Modal isOpen={modalOpen === 'deck'} onClose={() => setModalOpen('none')} title="Nuevo Mazo"><div className="space-y-8 mt-6"><div className="space-y-3"><label className="text-[11px] font-black text-slate-400 uppercase tracking-widest px-2">Nombre</label><input placeholder="Vocabulario..." className="w-full p-6 rounded-3xl bg-slate-50 border-none text-2xl font-black text-slate-800 focus:ring-2 focus:ring-indigo-100 outline-none shadow-inner" value={newDeckName} onChange={e => setNewDeckName(e.target.value)}/></div><div className="space-y-3"><label className="text-[11px] font-black text-slate-400 uppercase tracking-widest px-2">Color</label><div className="grid grid-cols-5 gap-4 pt-2">{['bg-indigo-500', 'bg-rose-500', 'bg-amber-500', 'bg-emerald-500', 'bg-slate-800'].map(color => (<button key={color} onClick={() => setNewDeckColor(color)} className={`aspect-square rounded-2xl ${color} transition-all ${newDeckColor === color ? 'ring-4 ring-indigo-200 scale-110 shadow-lg' : 'opacity-40 scale-90'}`}></button>))}</div></div><Button onClick={saveDeck} className="w-full py-6 text-base font-black uppercase tracking-widest rounded-full shadow-xl shadow-indigo-100 mt-4" disabled={!newDeckName}>Confirmar Mazo</Button></div></Modal>
 
-      {/* MODAL: SETTINGS */}
       <Modal isOpen={modalOpen === 'deck_settings'} onClose={() => setModalOpen('none')} title="Configurar Mazo">
         <div className="mt-4 space-y-6">
           <div className="space-y-2">
             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Editar Nombre</label>
             <input className="w-full p-4 rounded-2xl bg-slate-50 border-none text-lg font-black text-slate-800 focus:ring-2 focus:ring-indigo-100 outline-none shadow-inner" value={newDeckName} onChange={e => setNewDeckName(e.target.value)}/>
           </div>
-          
           <div className="space-y-2">
             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Color</label>
             <div className="grid grid-cols-5 gap-3 pt-1">
@@ -508,38 +510,19 @@ const App: React.FC = () => {
                ))}
             </div>
           </div>
-
           <div className="flex flex-col gap-3 pt-6 border-t border-slate-50">
             <Button onClick={saveDeck} className="w-full py-4 text-xs font-black uppercase tracking-widest rounded-2xl">Guardar Cambios</Button>
-            
-            {deckCardsCountForSelected > 0 ? (
-              <div 
-                onClick={() => { setModalOpen('none'); setLibraryDeckFilter(selectedDeckId); setActiveTab('library'); }}
-                className="group p-5 bg-indigo-50 rounded-2xl border border-indigo-100 flex items-center justify-between cursor-pointer active:scale-95 transition-all hover:bg-indigo-100/50"
-              >
-                <div className="flex items-center gap-3">
-                  <LibraryIcon className="text-indigo-500 shrink-0" size={20} />
-                  <div className="space-y-0.5">
-                    <p className="text-[10px] text-indigo-800 font-black uppercase tracking-tight">Mazo con {deckCardsCountForSelected} tarjetas</p>
-                    <p className="text-[11px] text-indigo-600 font-bold leading-none">Vaciar biblioteca para borrar mazo</p>
-                  </div>
-                </div>
-                <ArrowRight size={18} className="text-indigo-400 group-hover:translate-x-1 transition-transform" />
-              </div>
-            ) : (
-              <Button 
-                variant="danger" 
-                onClick={() => deleteDeck(selectedDeckId)} 
-                className="w-full py-4 rounded-2xl text-xs font-black uppercase tracking-widest"
-              >
-                Eliminar Mazo Vacío
-              </Button>
-            )}
+            <Button 
+              variant="danger" 
+              onClick={() => deleteDeck(selectedDeckId)} 
+              className="w-full py-4 rounded-2xl text-xs font-black uppercase tracking-widest"
+            >
+              Eliminar Mazo
+            </Button>
           </div>
         </div>
       </Modal>
 
-      {/* MODAL: SESSION START SELECTION */}
       <Modal isOpen={modalOpen === 'session_start'} onClose={() => setModalOpen('none')} title="Preparar Sesión">
         <div className="space-y-6 mt-4">
           <div className="p-8 bg-slate-50 rounded-[2.5rem] text-center border border-slate-100 shadow-inner">
