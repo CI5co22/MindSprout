@@ -1,39 +1,44 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Flashcard, Difficulty, StudyMode } from '../types';
 import { Button } from './Button';
 
 interface FlashcardItemProps {
   card: Flashcard;
   sessionMode: StudyMode;
-  onAnswer: (difficulty: Difficulty) => void;
+  onAnswer: (difficulty: Difficulty, duration: number) => void;
 }
 
 export const FlashcardItem: React.FC<FlashcardItemProps> = ({ card, sessionMode, onAnswer }) => {
   const [isRevealed, setIsRevealed] = useState(false);
   const [typedAnswer, setTypedAnswer] = useState('');
+  const startTimeRef = useRef<number>(Date.now());
   
   const effectiveMode: StudyMode = card.type === 'cloze' ? 'type' : sessionMode;
 
   useEffect(() => {
     setIsRevealed(false);
     setTypedAnswer('');
+    startTimeRef.current = Date.now();
   }, [card.id]);
 
   const handleReveal = () => {
     setIsRevealed(true);
   };
 
+  const handleAnswerClick = (difficulty: Difficulty) => {
+    const duration = Date.now() - startTimeRef.current;
+    onAnswer(difficulty, duration);
+  };
+
   const normalize = (s: string) => s.trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g,"");
   
-  // Extraer todas las respuestas de los huecos {{...}}
   const getExpectedAnswers = (text: string) => {
     const matches = text.matchAll(/\{\{(.*?)\}\}/g);
     return Array.from(matches).map(m => m[1]);
   };
 
   const expectedAnswers = getExpectedAnswers(card.question);
-  // Verificación simplificada: si el usuario escribió alguna de las palabras clave o la frase completa (si hay solo una)
   const isCorrect = expectedAnswers.some(ans => normalize(typedAnswer).includes(normalize(ans))) || 
                     normalize(typedAnswer) === normalize(expectedAnswers.join(" "));
 
@@ -92,10 +97,10 @@ export const FlashcardItem: React.FC<FlashcardItemProps> = ({ card, sessionMode,
           </div>
 
           <div className="grid grid-cols-2 gap-3 w-full animate-in fade-in slide-in-from-bottom-4">
-            <Button variant="secondary" onClick={() => onAnswer('very-hard')} className="border-rose-100 text-rose-600 bg-rose-50/30">Muy Difícil</Button>
-            <Button variant="secondary" onClick={() => onAnswer('hard')} className="border-orange-100 text-orange-600 bg-orange-50/30">Difícil</Button>
-            <Button variant="secondary" onClick={() => onAnswer('easy')} className="border-emerald-100 text-emerald-600 bg-emerald-50/30">Fácil</Button>
-            <Button variant="secondary" onClick={() => onAnswer('very-easy')} className="border-indigo-100 text-indigo-600 bg-indigo-50/30">Muy Fácil</Button>
+            <button onClick={() => handleAnswerClick('very-hard')} className="p-4 rounded-2xl border-2 border-rose-100 text-rose-600 bg-rose-50/30 font-bold hover:bg-rose-50 transition-colors">Muy Difícil</button>
+            <button onClick={() => handleAnswerClick('hard')} className="p-4 rounded-2xl border-2 border-orange-100 text-orange-600 bg-orange-50/30 font-bold hover:bg-orange-50 transition-colors">Difícil</button>
+            <button onClick={() => handleAnswerClick('easy')} className="p-4 rounded-2xl border-2 border-emerald-100 text-emerald-600 bg-emerald-50/30 font-bold hover:bg-emerald-50 transition-colors">Fácil</button>
+            <button onClick={() => handleAnswerClick('very-easy')} className="p-4 rounded-2xl border-2 border-indigo-100 text-indigo-600 bg-indigo-50/30 font-bold hover:bg-indigo-50 transition-colors">Muy Fácil</button>
           </div>
         </>
       )}

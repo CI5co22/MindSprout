@@ -15,10 +15,37 @@ import {
 import { 
   Home, Library as LibraryIcon, BarChart2, Trash2, Edit2, 
   ArrowLeftRight, Plus, ChevronRight, Layout,
-  Share2, Download, FilePlus2, Zap
+  Share2, Download, FilePlus2, Zap, AlertCircle, Clock, CheckCircle2, TrendingUp, Info
 } from 'lucide-react';
 
 const DEFAULT_SESSION_LIMIT = 20;
+
+const INFO_TIPS = {
+  retention: {
+    title: "Tasa de Retención",
+    description: "Mide qué tan efectivo es tu recuerdo. Se calcula como el porcentaje de respuestas 'Fácil' o 'Muy Fácil' sobre el total de repasos realizados. Una tasa ideal suele estar entre el 80% y 95%. Si es menor, quizás necesitas simplificar tus tarjetas."
+  },
+  avgTime: {
+    title: "Tiempo Promedio",
+    description: "Es el tiempo medio (en segundos) que tardas en responder una tarjeta. Te ayuda a estimar cuánto tiempo real te tomará completar tus sesiones diarias. Un tiempo muy alto puede indicar que la tarjeta tiene demasiada información."
+  },
+  leeches: {
+    title: "Tarjetas Sanguijuela",
+    description: "Son tarjetas 'problemáticas' que has fallado repetidamente (más de 3 veces) o que tienen un factor de facilidad muy bajo. Estas tarjetas consumen mucho tiempo sin generar aprendizaje real; la recomendación es editarlas para que sean más claras o dividirlas en conceptos más pequeños."
+  },
+  totalReviews: {
+    title: "Total de Repasos",
+    description: "El volumen total de interacciones acumuladas. Cada vez que presionas un botón de dificultad durante una sesión, este contador aumenta. Refleja tu esfuerzo y constancia a largo plazo."
+  },
+  workload: {
+    title: "Proyección Semanal",
+    description: "Una predicción inteligente de cuántas tarjetas estarán listas para repasar en los próximos 7 días, basándose en los intervalos actuales calculados por el algoritmo SRS. Úsalo para planificar tus días de estudio intenso."
+  },
+  maturity: {
+    title: "Madurez del Conocimiento",
+    description: "Clasifica tus tarjetas según la solidez del recuerdo en tu memoria:\n\n• Semillas: Tarjetas nuevas que aún no has empezado a aprender.\n• Brotes: En fase inicial de aprendizaje (intervalo menor a 5 días).\n• Árboles: Conocimiento consolidándose (intervalo entre 5 y 21 días).\n• Bosque: Conocimiento permanente o a muy largo plazo (intervalo mayor a 21 días)."
+  }
+};
 
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'home' | 'library' | 'stats'>('home');
@@ -31,10 +58,10 @@ const App: React.FC = () => {
   const [sessionDoneCount, setSessionDoneCount] = useState(0);
 
   const [modalOpen, setModalOpen] = useState<'none' | 'card' | 'deck' | 'session_start' | 'deck_settings' | 'export_deck'>('none');
+  const [infoTip, setInfoTip] = useState<keyof typeof INFO_TIPS | null>(null);
   const [selectedDeckId, setSelectedDeckId] = useState<string>('');
   const [deckToExport, setDeckToExport] = useState<Deck | null>(null);
   
-  // UI States for custom feedback
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [confirmConfig, setConfirmConfig] = useState<{
     title: string;
@@ -45,7 +72,6 @@ const App: React.FC = () => {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Card Form State
   const [editingCardId, setEditingCardId] = useState<string | null>(null);
   const [cardType, setCardType] = useState<CardType>('normal');
   const [cardFront, setCardFront] = useState('');
@@ -53,14 +79,11 @@ const App: React.FC = () => {
   const [clozeStep, setClozeStep] = useState<'write' | 'select'>('write');
   const [selectedWords, setSelectedWords] = useState<number[]>([]);
   
-  // Deck Form State
   const [newDeckName, setNewDeckName] = useState('');
   const [newDeckColor, setNewDeckColor] = useState('bg-indigo-500');
   const [newDeckStrategy, setNewDeckStrategy] = useState<StudyStrategy>('standard');
 
-  // Library Filter
   const [libraryDeckFilter, setLibraryDeckFilter] = useState<string>('all');
-
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
@@ -82,26 +105,69 @@ const App: React.FC = () => {
 
   const stats: Stats = useMemo(() => {
     const now = Date.now();
-    const getIsMastered = (card: Flashcard) => {
-      const deck = decks.find(d => d.id === card.deckId);
-      const threshold = deck?.settings?.strategy === 'exam' ? 7 : 21;
-      return card.interval >= threshold;
-    };
+    
+    // Categorización por madurez
+    const seeds = cards.filter(c => c.repetition === 0).length;
+    const sprouts = cards.filter(c => c.repetition > 0 && c.interval < 5).length;
+    const trees = cards.filter(c => c.interval >= 5 && c.interval < 21).length;
+    const forest = cards.filter(c => c.interval >= 21).length;
+
+    // Tasa de retención
+    const allHistory = cards.flatMap(c => c.history);
+    const successfulReviews = allHistory.filter(h => h.difficulty === 'easy' || h.difficulty === 'very-easy').length;
+    const retentionRate = allHistory.length > 0 ? (successfulReviews / allHistory.length) * 100 : 0;
+
+    // Tiempo promedio por tarjeta
+    const totalDuration = allHistory.reduce((acc, curr) => acc + (curr.duration || 0), 0);
+    const avgTimePerCard = allHistory.length > 0 ? totalDuration / allHistory.length : 0;
+
+    // Proyección de carga (Siguientes 7 días)
+    const workloadMap: Record<string, number> = {};
+    const dayNames = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(now + i * 24 * 60 * 60 * 1000);
+      const label = i === 0 ? 'Hoy' : dayNames[d.getDay()];
+      workloadMap[label] = 0;
+    }
+
+    cards.forEach(card => {
+      const daysDiff = Math.floor((card.nextReview - now) / (24 * 60 * 60 * 1000));
+      if (daysDiff >= 0 && daysDiff < 7) {
+        const d = new Date(card.nextReview);
+        const label = daysDiff === 0 ? 'Hoy' : dayNames[d.getDay()];
+        if (workloadMap[label] !== undefined) workloadMap[label]++;
+      } else if (card.nextReview < now) {
+        workloadMap['Hoy']++;
+      }
+    });
+
+    const workload = Object.entries(workloadMap).map(([day, count]) => ({ day, count }));
+
+    // Leeches: Tarjetas con muchas fallas o facilidad mínima
+    const leeches = cards
+      .filter(c => c.history.filter(h => h.difficulty === 'very-hard' || h.difficulty === 'hard').length >= 3 || c.easiness <= 1.4)
+      .sort((a, b) => b.history.length - a.history.length)
+      .slice(0, 5);
 
     return {
       total: cards.length,
       due: cards.filter(c => c.nextReview <= now).length,
-      new: cards.filter(c => c.repetition === 0).length,
-      learning: cards.filter(c => c.repetition > 0 && !getIsMastered(c)).length,
-      mastered: cards.filter(c => getIsMastered(c)).length
+      new: seeds,
+      learning: sprouts,
+      mastered: forest + trees,
+      retentionRate,
+      avgTimePerCard,
+      leeches,
+      workload,
+      maturity: { seeds, sprouts, trees, forest }
     };
-  }, [cards, decks]);
+  }, [cards]);
 
-  const chartData = useMemo(() => [
-    { name: 'Nuevas', value: stats.new, color: '#6366f1' },
-    { name: 'Aprendizaje', value: stats.learning, color: '#f59e0b' },
-    { name: 'Due', value: stats.due, color: '#f43f5e' },
-    { name: 'Sólidas', value: stats.mastered, color: '#10b981' }
+  const maturityData = useMemo(() => [
+    { name: 'Semillas', value: stats.maturity.seeds, color: '#6366f1' },
+    { name: 'Brotes', value: stats.maturity.sprouts, color: '#f59e0b' },
+    { name: 'Árboles', value: stats.maturity.trees, color: '#10b981' },
+    { name: 'Bosque', value: stats.maturity.forest, color: '#059669' }
   ], [stats]);
 
   const filteredLibraryCards = useMemo(() => {
@@ -134,10 +200,10 @@ const App: React.FC = () => {
     }
   };
 
-  const handleAnswer = async (difficulty: Difficulty) => {
+  const handleAnswer = async (difficulty: Difficulty, duration: number) => {
     const currentCard = studySession[0];
     const deck = decks.find(d => d.id === currentCard.deckId);
-    const updatedCard = calculateNextReview(currentCard, difficulty, deck?.settings?.strategy);
+    const updatedCard = calculateNextReview(currentCard, difficulty, deck?.settings?.strategy, duration);
     
     await dbInstance.put('flashcards', updatedCard);
     setCards(prev => prev.map(c => c.id === updatedCard.id ? updatedCard : c));
@@ -370,7 +436,6 @@ const App: React.FC = () => {
 
       <input type="file" ref={fileInputRef} className="hidden" accept="*/*" onChange={handleImportFile} />
 
-      {/* SIDEBAR */}
       {!isStudying && (
         <aside className="hidden md:flex flex-col w-64 lg:w-72 h-screen glass-panel border-r border-slate-100 p-8 sticky top-0 shrink-0">
           <div className="mb-12"><h1 className="text-2xl font-black text-slate-800 tracking-tight leading-none">MindSprout</h1><p className="text-[10px] font-black text-indigo-500 uppercase tracking-widest mt-2">Spaced Repetition</p></div>
@@ -385,7 +450,6 @@ const App: React.FC = () => {
         </aside>
       )}
 
-      {/* MOBILE HEADER */}
       {!isStudying && (
         <header className="md:hidden px-6 pt-12 pb-6 glass-panel sticky top-0 z-10 border-b border-slate-100 flex justify-between items-center">
           <div><h1 className="text-2xl font-black text-slate-800 tracking-tight leading-none">MindSprout</h1><p className="text-[10px] font-black text-indigo-500 uppercase tracking-widest mt-1">{activeTab === 'home' ? 'Tu Progreso' : activeTab === 'library' ? 'Biblioteca' : 'Estadísticas'}</p></div>
@@ -393,7 +457,6 @@ const App: React.FC = () => {
         </header>
       )}
 
-      {/* MAIN CONTENT */}
       <main className={`flex-1 overflow-y-auto pb-24 md:pb-12 transition-all duration-300 ${isStudying ? 'pt-8' : 'pt-0 md:pt-16'}`}>
         <div className={`mx-auto px-4 md:px-8 lg:px-12 ${isStudying ? 'max-w-4xl' : 'max-w-7xl'}`}>
           {isStudying ? (
@@ -499,14 +562,115 @@ const App: React.FC = () => {
               )}
 
               {activeTab === 'stats' && (
-                <div className="space-y-10 animate-in zoom-in duration-300">
-                  <h2 className="text-3xl font-black text-slate-800 tracking-tight">Rendimiento</h2>
-                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                    <div className="lg:col-span-2 bg-white p-8 rounded-[3rem] border border-slate-100 shadow-sm min-h-[400px]">
-                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-8">Estado de Repaso</p>
-                      <div className="h-full max-h-[300px]"><ResponsiveContainer width="100%" height="100%"><BarChart data={chartData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" /><XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize: 11, fontWeight: 700, fill: '#94a3b8'}} /><YAxis axisLine={false} tickLine={false} tick={{fontSize: 11, fontWeight: 700, fill: '#cbd5e1'}} /><Tooltip contentStyle={{ borderRadius: '1.5rem', border: 'none', boxShadow: '0 25px 50px -12px rgb(0 0 0 / 0.15)', padding: '16px' }} cursor={{fill: '#f8fafc'}} /><Bar dataKey="value" radius={[10, 10, 0, 0]} barSize={50}>{chartData.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.color} />)}</Bar></BarChart></ResponsiveContainer></div>
+                <div className="space-y-12 animate-in zoom-in duration-300">
+                  <h2 className="text-3xl font-black text-slate-800 tracking-tight">Rendimiento e Inteligencia</h2>
+                  
+                  {/* KPIs Superiores */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+                    <div className="bg-white p-6 rounded-[2.5rem] border border-slate-100 shadow-sm flex items-center gap-5 relative">
+                      <button onClick={() => setInfoTip('retention')} className="absolute top-4 right-4 text-slate-200 hover:text-indigo-400 transition-colors"><Info size={16} /></button>
+                      <div className="w-12 h-12 bg-indigo-50 rounded-2xl flex items-center justify-center text-indigo-600"><TrendingUp size={24} /></div>
+                      <div>
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Retención</p>
+                        <p className="text-2xl font-black text-slate-800 tabular-nums">{stats.retentionRate.toFixed(1)}%</p>
+                      </div>
                     </div>
-                    <div className="flex flex-col gap-6"><div className="bg-white p-8 rounded-[3rem] border border-slate-100 shadow-sm flex-1 flex flex-col items-center justify-center text-center"><div className="w-32 h-32 relative mb-4"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={chartData} dataKey="value" innerRadius={40} outerRadius={60} paddingAngle={8} stroke="none">{chartData.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.color} />)}</Pie></PieChart></ResponsiveContainer><div className="absolute inset-0 flex items-center justify-center"><span className="text-2xl font-black text-slate-800">{stats.total}</span></div></div><p className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Total Tarjetas</p></div><div className="grid grid-cols-2 gap-4"><div className="bg-emerald-500 p-6 rounded-[2.5rem] text-white text-center shadow-lg shadow-emerald-100"><p className="text-3xl font-black leading-none">{stats.mastered}</p><p className="text-[9px] font-black uppercase tracking-widest mt-1 opacity-60">Sólidas</p></div><div className="bg-amber-500 p-6 rounded-[2.5rem] text-white text-center shadow-lg shadow-amber-100"><p className="text-3xl font-black leading-none">{stats.learning}</p><p className="text-[9px] font-black uppercase tracking-widest mt-1 opacity-60">En Curso</p></div></div></div>
+                    <div className="bg-white p-6 rounded-[2.5rem] border border-slate-100 shadow-sm flex items-center gap-5 relative">
+                      <button onClick={() => setInfoTip('avgTime')} className="absolute top-4 right-4 text-slate-200 hover:text-emerald-400 transition-colors"><Info size={16} /></button>
+                      <div className="w-12 h-12 bg-emerald-50 rounded-2xl flex items-center justify-center text-emerald-600"><Clock size={24} /></div>
+                      <div>
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">T. Promedio</p>
+                        <p className="text-2xl font-black text-slate-800 tabular-nums">{(stats.avgTimePerCard / 1000).toFixed(1)}s</p>
+                      </div>
+                    </div>
+                    <div className="bg-white p-6 rounded-[2.5rem] border border-slate-100 shadow-sm flex items-center gap-5 relative">
+                      <button onClick={() => setInfoTip('leeches')} className="absolute top-4 right-4 text-slate-200 hover:text-rose-400 transition-colors"><Info size={16} /></button>
+                      <div className="w-12 h-12 bg-rose-50 rounded-2xl flex items-center justify-center text-rose-600"><AlertCircle size={24} /></div>
+                      <div>
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Sanguijuelas</p>
+                        <p className="text-2xl font-black text-slate-800 tabular-nums">{stats.leeches.length}</p>
+                      </div>
+                    </div>
+                    <div className="bg-white p-6 rounded-[2.5rem] border border-slate-100 shadow-sm flex items-center gap-5 relative">
+                      <button onClick={() => setInfoTip('totalReviews')} className="absolute top-4 right-4 text-slate-200 hover:text-amber-400 transition-colors"><Info size={16} /></button>
+                      <div className="w-12 h-12 bg-amber-50 rounded-2xl flex items-center justify-center text-amber-600"><CheckCircle2 size={24} /></div>
+                      <div>
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Repasadas</p>
+                        <p className="text-2xl font-black text-slate-800 tabular-nums">{cards.flatMap(c => c.history).length}</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                    {/* Proyección de Carga */}
+                    <div className="bg-white p-8 rounded-[3rem] border border-slate-100 shadow-sm min-h-[350px] relative">
+                      <button onClick={() => setInfoTip('workload')} className="absolute top-8 right-8 text-slate-200 hover:text-indigo-400 transition-colors"><Info size={18} /></button>
+                      <h3 className="text-sm font-black text-slate-800 uppercase tracking-widest mb-8 flex items-center gap-2">
+                        <TrendingUp size={16} className="text-indigo-500" /> Proyección Semanal
+                      </h3>
+                      <div className="h-[250px]">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart data={stats.workload}>
+                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                            <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{fontSize: 12, fontWeight: 700, fill: '#94a3b8'}} />
+                            <YAxis axisLine={false} tickLine={false} tick={{fontSize: 12, fontWeight: 700, fill: '#cbd5e1'}} />
+                            <Tooltip cursor={{fill: '#f8fafc'}} contentStyle={{ borderRadius: '1.5rem', border: 'none', boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1)' }} />
+                            <Bar dataKey="count" fill="#6366f1" radius={[8, 8, 0, 0]} barSize={40} />
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+
+                    {/* Madurez del Conocimiento */}
+                    <div className="bg-white p-8 rounded-[3rem] border border-slate-100 shadow-sm min-h-[350px] relative">
+                      <button onClick={() => setInfoTip('maturity')} className="absolute top-8 right-8 text-slate-200 hover:text-emerald-400 transition-colors"><Info size={18} /></button>
+                      <h3 className="text-sm font-black text-slate-800 uppercase tracking-widest mb-8 flex items-center gap-2">
+                        <Layout size={16} className="text-emerald-500" /> Madurez de Conocimiento
+                      </h3>
+                      <div className="flex flex-col sm:flex-row items-center gap-8">
+                        <div className="w-full h-[200px] sm:w-1/2">
+                          <PieChart width={160} height={160}>
+                            <Pie data={maturityData} dataKey="value" innerRadius={60} outerRadius={80} paddingAngle={5} stroke="none">
+                              {maturityData.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.color} />)}
+                            </Pie>
+                            <Tooltip contentStyle={{ borderRadius: '1rem', border: 'none' }} />
+                          </PieChart>
+                        </div>
+                        <div className="w-full sm:w-1/2 space-y-3">
+                          {maturityData.map(item => (
+                            <div key={item.name} className="flex justify-between items-center text-sm">
+                              <div className="flex items-center gap-2">
+                                <div className="w-3 h-3 rounded-full" style={{backgroundColor: item.color}} />
+                                <span className="font-bold text-slate-600">{item.name}</span>
+                              </div>
+                              <span className="font-black text-slate-800 tabular-nums">{item.value}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Leeches (Tarjetas Sanguijuela) */}
+                  <div className="bg-white p-8 rounded-[3rem] border border-slate-100 shadow-sm">
+                    <h3 className="text-sm font-black text-slate-800 uppercase tracking-widest mb-6 flex items-center gap-2 text-rose-500">
+                      <AlertCircle size={16} /> Tarjetas Sanguijuela (Leeches)
+                    </h3>
+                    {stats.leeches.length === 0 ? (
+                      <p className="text-slate-400 font-medium text-center py-6 italic">No tienes tarjetas problemáticas. ¡Buen trabajo!</p>
+                    ) : (
+                      <div className="space-y-4">
+                        {stats.leeches.map(card => (
+                          <div key={card.id} className="p-5 rounded-2xl bg-rose-50/30 border border-rose-100/50 flex flex-col sm:flex-row justify-between sm:items-center gap-4">
+                            <div className="flex-1">
+                              <p className="font-bold text-slate-800 leading-tight truncate">{card.question}</p>
+                              <p className="text-[10px] font-black text-rose-400 uppercase tracking-widest mt-1">Fallada {card.history.filter(h => h.difficulty === 'very-hard' || h.difficulty === 'hard').length} veces</p>
+                            </div>
+                            <button onClick={() => handleEditCard(card)} className="px-4 py-2 bg-white text-rose-500 rounded-xl text-[10px] font-black border border-rose-100 hover:bg-rose-500 hover:text-white transition-all shadow-sm">REDACTAR DE NUEVO</button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -515,12 +679,22 @@ const App: React.FC = () => {
         </div>
       </main>
 
-      {/* MOBILE NAV */}
       {!isStudying && (
         <nav className="md:hidden fixed bottom-0 left-0 right-0 glass-panel border-t border-slate-100 flex justify-around py-4 pb-10 px-6 z-20"><button onClick={() => setActiveTab('home')} className={`flex flex-col items-center gap-1.5 transition-all ${activeTab === 'home' ? 'text-indigo-600 scale-110' : 'text-slate-300'}`}><Home size={22} /><span className="text-[9px] font-black uppercase tracking-tighter">Inicio</span></button><button onClick={() => setActiveTab('library')} className={`flex flex-col items-center gap-1.5 transition-all ${activeTab === 'library' ? 'text-indigo-600 scale-110' : 'text-slate-300'}`}><LibraryIcon size={22} /><span className="text-[9px] font-black uppercase tracking-tighter">Biblio</span></button><button onClick={() => setActiveTab('stats')} className={`flex flex-col items-center gap-1.5 transition-all ${activeTab === 'stats' ? 'text-indigo-600 scale-110' : 'text-slate-300'}`}><BarChart2 size={22} /><span className="text-[9px] font-black uppercase tracking-tighter">Stats</span></button></nav>
       )}
 
-      {/* MODALS */}
+      {/* Info Tip Modal */}
+      <Modal isOpen={!!infoTip} onClose={() => setInfoTip(null)} title={infoTip ? INFO_TIPS[infoTip].title : ""}>
+        <div className="mt-4 space-y-4">
+          <p className="text-slate-600 font-medium leading-relaxed whitespace-pre-line">
+            {infoTip ? INFO_TIPS[infoTip].description : ""}
+          </p>
+          <Button onClick={() => setInfoTip(null)} className="w-full py-4 rounded-2xl text-xs font-black uppercase tracking-widest mt-4">
+            Entendido
+          </Button>
+        </div>
+      </Modal>
+
       <Modal isOpen={modalOpen === 'export_deck'} onClose={() => setModalOpen('none')} title="Exportar Mazo"><div className="space-y-8 mt-6 text-center"><div className="mx-auto w-28 h-28 bg-emerald-50 rounded-[3rem] flex items-center justify-center text-emerald-500 shadow-xl shadow-emerald-50/50 border border-emerald-100"><Download size={48} strokeWidth={2} /></div><div className="space-y-3"><h4 className="text-2xl font-black text-slate-800 tracking-tight">Listo para descargar</h4><p className="text-slate-500 font-medium text-sm leading-relaxed max-w-[280px] mx-auto">Se generará un archivo <strong className="text-slate-800">.sprout</strong> con el mazo "{deckToExport?.name}" y sus tarjetas.</p></div><div className="space-y-3"><Button onClick={handleExportDeckAction} className="w-full py-6 text-base font-black uppercase tracking-widest rounded-full shadow-2xl shadow-emerald-100 flex items-center justify-center gap-3 bg-emerald-500 hover:bg-emerald-600"><Download size={20} strokeWidth={3} />Descargar Archivo</Button></div></div></Modal>
 
       <Modal isOpen={modalOpen === 'card'} onClose={() => { setModalOpen('none'); resetCardForm(); }} title={editingCardId ? "Editar Tarjeta" : "Nueva Tarjeta"}>
@@ -571,33 +745,15 @@ const App: React.FC = () => {
           <div className="space-y-2">
             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Estrategia de Estudio</label>
             <div className="grid grid-cols-2 gap-3 p-1 bg-slate-100 rounded-2xl">
-              <button 
-                onClick={() => setNewDeckStrategy('standard')} 
-                className={`py-3 rounded-xl text-[10px] font-black transition-all flex flex-col items-center gap-1 ${newDeckStrategy === 'standard' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-400'}`}
-              >
-                <LibraryIcon size={14} />
-                ESTÁNDAR
-              </button>
-              <button 
-                onClick={() => setNewDeckStrategy('exam')} 
-                className={`py-3 rounded-xl text-[10px] font-black transition-all flex flex-col items-center gap-1 ${newDeckStrategy === 'exam' ? 'bg-white shadow-sm text-rose-600' : 'text-slate-400'}`}
-              >
-                <Zap size={14} />
-                MODO EXAMEN
-              </button>
+              <button onClick={() => setNewDeckStrategy('standard')} className={`py-3 rounded-xl text-[10px] font-black transition-all flex flex-col items-center gap-1 ${newDeckStrategy === 'standard' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-400'}`}><LibraryIcon size={14} />ESTÁNDAR</button>
+              <button onClick={() => setNewDeckStrategy('exam')} className={`py-3 rounded-xl text-[10px] font-black transition-all flex flex-col items-center gap-1 ${newDeckStrategy === 'exam' ? 'bg-white shadow-sm text-rose-600' : 'text-slate-400'}`}><Zap size={14} />MODO EXAMEN</button>
             </div>
-            <p className="px-2 text-[9px] text-slate-400 font-bold leading-tight">
-              {newDeckStrategy === 'exam' 
-                ? 'Intervalos cortos (1-4 días). Ideal para aprender mucho en 2 semanas.' 
-                : 'Intervalos crecientes. Ideal para retención a largo plazo (meses/años).'}
-            </p>
+            <p className="px-2 text-[9px] text-slate-400 font-bold leading-tight">{newDeckStrategy === 'exam' ? 'Intervalos cortos (1-4 días). Ideal para aprender mucho en 2 semanas.' : 'Intervalos crecientes. Ideal para retención a largo plazo (meses/años).'}</p>
           </div>
           <div className="space-y-2">
             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Color</label>
             <div className="grid grid-cols-5 gap-3 pt-1">
-               {['bg-indigo-500', 'bg-rose-500', 'bg-amber-500', 'bg-emerald-500', 'bg-slate-800'].map(color => (
-                  <button key={color} onClick={() => setNewDeckColor(color)} className={`aspect-square rounded-xl ${color} transition-all ${newDeckColor === color ? 'ring-4 ring-indigo-200 scale-110 shadow-md' : 'opacity-40 scale-90'}`}></button>
-               ))}
+               {['bg-indigo-500', 'bg-rose-500', 'bg-amber-500', 'bg-emerald-500', 'bg-slate-800'].map(color => (<button key={color} onClick={() => setNewDeckColor(color)} className={`aspect-square rounded-xl ${color} transition-all ${newDeckColor === color ? 'ring-4 ring-indigo-200 scale-110 shadow-md' : 'opacity-40 scale-90'}`}></button>))}
             </div>
           </div>
           <div className="flex flex-col gap-3 pt-6 border-t border-slate-50">

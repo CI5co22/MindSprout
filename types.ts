@@ -23,6 +23,7 @@ export interface ReviewHistory {
   date: number;
   difficulty: Difficulty;
   interval: number;
+  duration: number; // Tiempo en milisegundos invertido en la tarjeta
 }
 
 export interface Deck {
@@ -43,4 +44,14 @@ export interface Stats {
   new: number;
   learning: number;
   mastered: number;
+  retentionRate: number;
+  avgTimePerCard: number;
+  leeches: Flashcard[];
+  workload: { day: string; count: number }[];
+  maturity: {
+    seeds: number;
+    sprouts: number;
+    trees: number;
+    forest: number;
+  };
 }

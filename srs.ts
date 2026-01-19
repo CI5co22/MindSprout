@@ -7,7 +7,8 @@ import { Flashcard, Difficulty, StudyStrategy } from './types';
 export function calculateNextReview(
   card: Flashcard, 
   difficulty: Difficulty, 
-  strategy: StudyStrategy = 'standard'
+  strategy: StudyStrategy = 'standard',
+  duration: number = 0
 ): Flashcard {
   let q: number;
   switch (difficulty) {
@@ -29,7 +30,6 @@ export function calculateNextReview(
     } else if (repetition === 2 && isExam) {
       interval = 4;
     } else {
-      // En modo examen el crecimiento es mucho más lento (máximo 1.6x)
       const multiplier = isExam ? Math.min(easiness, 1.6) : easiness;
       interval = Math.round(interval * multiplier);
     }
@@ -39,11 +39,9 @@ export function calculateNextReview(
     interval = 1;
   }
 
-  // Adjust easiness factor (EF)
   easiness = easiness + (0.1 - (3 - q) * (0.08 + (3 - q) * 0.02));
   if (easiness < 1.3) easiness = 1.3;
   
-  // En modo examen, capamos la facilidad para que no suba demasiado
   if (isExam && easiness > 1.8) easiness = 1.8;
 
   const now = Date.now();
@@ -58,7 +56,7 @@ export function calculateNextReview(
     nextReview,
     history: [
       ...card.history,
-      { date: now, difficulty, interval }
+      { date: now, difficulty, interval, duration }
     ]
   };
 }
