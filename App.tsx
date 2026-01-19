@@ -299,12 +299,12 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row safe-area-bottom overflow-hidden">
-      {/* Input de archivos con 'accept' ampliado para iOS */}
+      {/* Input de archivos con 'accept' universal para evitar el bloqueo en iOS */}
       <input 
         type="file" 
         ref={fileInputRef} 
         className="hidden" 
-        accept=".json,.sprout,application/json" 
+        accept="*/*" 
         onChange={handleImportFile} 
       />
 
