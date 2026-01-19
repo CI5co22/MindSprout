@@ -2,6 +2,7 @@
 export type Difficulty = 'very-hard' | 'hard' | 'easy' | 'very-easy';
 export type CardType = 'normal' | 'cloze';
 export type StudyMode = 'reveal' | 'type';
+export type StudyStrategy = 'standard' | 'exam';
 
 export interface Flashcard {
   id: string;
@@ -32,6 +33,7 @@ export interface Deck {
   createdAt: number;
   settings?: {
     sessionLimit: number;
+    strategy: StudyStrategy;
   };
 }
 

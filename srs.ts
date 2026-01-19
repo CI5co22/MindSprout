@@ -1,15 +1,14 @@
 
-import { Flashcard, Difficulty } from './types';
+import { Flashcard, Difficulty, StudyStrategy } from './types';
 
 /**
- * SM-2 Algorithm Implementation
- * q (Quality): 
- * 3: Very Easy (Optimal response)
- * 2: Easy (Correct response after hesitation)
- * 1: Hard (Correct response with serious difficulty)
- * 0: Very Hard (Incorrect response)
+ * SM-2 Algorithm Implementation with Exam Mode support
  */
-export function calculateNextReview(card: Flashcard, difficulty: Difficulty): Flashcard {
+export function calculateNextReview(
+  card: Flashcard, 
+  difficulty: Difficulty, 
+  strategy: StudyStrategy = 'standard'
+): Flashcard {
   let q: number;
   switch (difficulty) {
     case 'very-easy': q = 3; break;
@@ -20,14 +19,19 @@ export function calculateNextReview(card: Flashcard, difficulty: Difficulty): Fl
   }
 
   let { repetition, interval, easiness } = card;
+  const isExam = strategy === 'exam';
 
   if (q >= 2) { // Correct responses
     if (repetition === 0) {
       interval = 1;
     } else if (repetition === 1) {
+      interval = isExam ? 2 : 4;
+    } else if (repetition === 2 && isExam) {
       interval = 4;
     } else {
-      interval = Math.round(interval * easiness);
+      // En modo examen el crecimiento es mucho más lento (máximo 1.6x)
+      const multiplier = isExam ? Math.min(easiness, 1.6) : easiness;
+      interval = Math.round(interval * multiplier);
     }
     repetition += 1;
   } else { // Incorrect or "very hard" responses
@@ -36,11 +40,11 @@ export function calculateNextReview(card: Flashcard, difficulty: Difficulty): Fl
   }
 
   // Adjust easiness factor (EF)
-  // EF' = EF + (0.1 - (3-q) * (0.08 + (3-q) * 0.02))
-  // For q=3: EF += 0.1
-  // For q=0: EF -= 0.5 (capped at 1.3)
   easiness = easiness + (0.1 - (3 - q) * (0.08 + (3 - q) * 0.02));
   if (easiness < 1.3) easiness = 1.3;
+  
+  // En modo examen, capamos la facilidad para que no suba demasiado
+  if (isExam && easiness > 1.8) easiness = 1.8;
 
   const now = Date.now();
   const nextReview = now + interval * 24 * 60 * 60 * 1000;

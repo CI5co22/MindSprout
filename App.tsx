@@ -1,11 +1,13 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { dbInstance } from './db';
-import { Flashcard, Deck, Difficulty, Stats, CardType, StudyMode } from './types';
+import { Flashcard, Deck, Difficulty, Stats, CardType, StudyMode, StudyStrategy } from './types';
 import { calculateNextReview } from './srs';
 import { Button } from './components/Button';
 import { FlashcardItem } from './components/FlashcardItem';
 import { Modal } from './components/Modal';
+import { ConfirmModal } from './components/ConfirmModal';
+import { Toast } from './components/Toast';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
   Cell, PieChart, Pie
@@ -13,7 +15,7 @@ import {
 import { 
   Home, Library as LibraryIcon, BarChart2, Trash2, Edit2, 
   ArrowLeftRight, Plus, ChevronRight, Layout,
-  Share2, Download, FilePlus2, ArrowRight
+  Share2, Download, FilePlus2, Zap
 } from 'lucide-react';
 
 const DEFAULT_SESSION_LIMIT = 20;
@@ -32,6 +34,15 @@ const App: React.FC = () => {
   const [selectedDeckId, setSelectedDeckId] = useState<string>('');
   const [deckToExport, setDeckToExport] = useState<Deck | null>(null);
   
+  // UI States for custom feedback
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const [confirmConfig, setConfirmConfig] = useState<{
+    title: string;
+    message: string;
+    onConfirm: () => void;
+    confirmText?: string;
+  } | null>(null);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Card Form State
@@ -45,6 +56,7 @@ const App: React.FC = () => {
   // Deck Form State
   const [newDeckName, setNewDeckName] = useState('');
   const [newDeckColor, setNewDeckColor] = useState('bg-indigo-500');
+  const [newDeckStrategy, setNewDeckStrategy] = useState<StudyStrategy>('standard');
 
   // Library Filter
   const [libraryDeckFilter, setLibraryDeckFilter] = useState<string>('all');
@@ -64,16 +76,26 @@ const App: React.FC = () => {
     init();
   }, []);
 
+  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+    setToast({ message, type });
+  };
+
   const stats: Stats = useMemo(() => {
     const now = Date.now();
+    const getIsMastered = (card: Flashcard) => {
+      const deck = decks.find(d => d.id === card.deckId);
+      const threshold = deck?.settings?.strategy === 'exam' ? 7 : 21;
+      return card.interval >= threshold;
+    };
+
     return {
       total: cards.length,
       due: cards.filter(c => c.nextReview <= now).length,
       new: cards.filter(c => c.repetition === 0).length,
-      learning: cards.filter(c => c.repetition > 0 && c.repetition < 4).length,
-      mastered: cards.filter(c => c.interval > 21).length
+      learning: cards.filter(c => c.repetition > 0 && !getIsMastered(c)).length,
+      mastered: cards.filter(c => getIsMastered(c)).length
     };
-  }, [cards]);
+  }, [cards, decks]);
 
   const chartData = useMemo(() => [
     { name: 'Nuevas', value: stats.new, color: '#6366f1' },
@@ -114,7 +136,9 @@ const App: React.FC = () => {
 
   const handleAnswer = async (difficulty: Difficulty) => {
     const currentCard = studySession[0];
-    const updatedCard = calculateNextReview(currentCard, difficulty);
+    const deck = decks.find(d => d.id === currentCard.deckId);
+    const updatedCard = calculateNextReview(currentCard, difficulty, deck?.settings?.strategy);
+    
     await dbInstance.put('flashcards', updatedCard);
     setCards(prev => prev.map(c => c.id === updatedCard.id ? updatedCard : c));
     setStudySession(prev => prev.slice(1));
@@ -170,8 +194,10 @@ const App: React.FC = () => {
     await dbInstance.put('flashcards', card);
     if (editingCardId) {
       setCards(prev => prev.map(c => c.id === editingCardId ? card : c));
+      showToast("Tarjeta actualizada");
     } else {
       setCards(prev => [...prev, card]);
+      showToast("Tarjeta creada con éxito");
     }
 
     resetCardForm();
@@ -192,54 +218,74 @@ const App: React.FC = () => {
     const isEdit = modalOpen === 'deck_settings';
     
     const d: Deck = isEdit 
-      ? { ...decks.find(d => d.id === selectedDeckId)!, name: newDeckName, color: newDeckColor }
+      ? { 
+          ...decks.find(d => d.id === selectedDeckId)!, 
+          name: newDeckName, 
+          color: newDeckColor,
+          settings: { 
+            ...(decks.find(d => d.id === selectedDeckId)?.settings || { sessionLimit: DEFAULT_SESSION_LIMIT }),
+            strategy: newDeckStrategy 
+          }
+        }
       : {
           id: Math.random().toString(36).substr(2, 9),
           name: newDeckName,
           color: newDeckColor,
           createdAt: Date.now(),
-          settings: { sessionLimit: DEFAULT_SESSION_LIMIT }
+          settings: { 
+            sessionLimit: DEFAULT_SESSION_LIMIT,
+            strategy: 'standard' 
+          }
         };
 
     await dbInstance.put('decks', d);
     if (isEdit) {
       setDecks(prev => prev.map(deck => deck.id === selectedDeckId ? d : deck));
+      showToast("Configuración del mazo guardada");
     } else {
       setDecks(prev => [...prev, d]);
       setSelectedDeckId(d.id);
+      showToast(`Mazo "${d.name}" creado`);
     }
     
     setNewDeckName('');
     setModalOpen('none');
   };
 
-  const deleteDeck = async (id: string) => {
-    // Definimos el mensaje claro y explicativo solicitado
-    const message = "¿Estás seguro? Al borrar el mazo se eliminarán todas las flashcards que contiene y esta acción es irreversible.";
-    
-    if (window.confirm(message)) {
-      // 1. Borrar todas las tarjetas asociadas a este mazo en la DB
-      const deckCards = cards.filter(c => c.deckId === id);
-      for (const card of deckCards) {
-        await dbInstance.delete('flashcards', card.id);
-      }
-
-      // 2. Borrar el mazo en la DB
-      await dbInstance.delete('decks', id);
-
-      // 3. Actualizar estados locales para reflejar los cambios inmediatamente
-      setDecks(prev => prev.filter(d => d.id !== id));
-      setCards(prev => prev.filter(c => c.deckId !== id));
-      
-      // 4. Cerrar el modal
-      setModalOpen('none');
-    }
+  const deleteDeckRequest = (id: string) => {
+    setConfirmConfig({
+      title: "Eliminar Mazo",
+      message: "¿Estás seguro? Al borrar el mazo se eliminarán todas las flashcards que contiene y esta acción es irreversible.",
+      confirmText: "Eliminar Mazo",
+      onConfirm: () => performDeleteDeck(id)
+    });
   };
 
-  const deleteCard = async (id: string) => {
-    if (!window.confirm("¿Borrar esta tarjeta permanentemente?")) return;
+  const performDeleteDeck = async (id: string) => {
+    const deckCards = cards.filter(c => c.deckId === id);
+    for (const card of deckCards) {
+      await dbInstance.delete('flashcards', card.id);
+    }
+    await dbInstance.delete('decks', id);
+    setDecks(prev => prev.filter(d => d.id !== id));
+    setCards(prev => prev.filter(c => c.deckId !== id));
+    setModalOpen('none');
+    showToast("Mazo eliminado permanentemente", "error");
+  };
+
+  const deleteCardRequest = (id: string) => {
+    setConfirmConfig({
+      title: "Borrar Tarjeta",
+      message: "¿Deseas borrar esta tarjeta permanentemente? No podrás recuperarla después.",
+      confirmText: "Borrar",
+      onConfirm: () => performDeleteCard(id)
+    });
+  };
+
+  const performDeleteCard = async (id: string) => {
     await dbInstance.delete('flashcards', id);
     setCards(prev => prev.filter(c => c.id !== id));
+    showToast("Tarjeta borrada", "error");
   };
 
   const handleExportDeckAction = () => {
@@ -256,6 +302,7 @@ const App: React.FC = () => {
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
     setModalOpen('none');
+    showToast("Exportación lista");
   };
 
   const handleImportFile = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -269,10 +316,15 @@ const App: React.FC = () => {
         text = text.replace(/[\u201C\u201D]/g, '"').replace(/[\u2018\u2019]/g, "'");
 
         const data = JSON.parse(text);
-        if (!data.deck || !Array.isArray(data.cards)) throw new Error("Formato inválido: Falta 'deck' o 'cards'");
+        if (!data.deck || !Array.isArray(data.cards)) throw new Error("Formato inválido");
 
         const newDeckId = Math.random().toString(36).substr(2, 9);
-        const newDeck: Deck = { ...data.deck, id: newDeckId, createdAt: Date.now() };
+        const newDeck: Deck = { 
+          ...data.deck, 
+          id: newDeckId, 
+          createdAt: Date.now(),
+          settings: data.deck.settings || { strategy: 'standard', sessionLimit: DEFAULT_SESSION_LIMIT }
+        };
         await dbInstance.put('decks', newDeck);
         setDecks(prev => [...prev, newDeck]);
         
@@ -292,10 +344,9 @@ const App: React.FC = () => {
         
         const newlyImportedCards = await Promise.all(newCardsPromises);
         setCards(prev => [...prev, ...newlyImportedCards]);
-        alert(`Mazo "${newDeck.name}" importado con éxito.`);
-      } catch (err: any) {
-        console.error("Error al importar:", err);
-        alert("Error al importar el mazo. Verifica que el archivo sea un JSON válido.");
+        showToast(`Mazo "${newDeck.name}" importado con éxito`);
+      } catch (err) {
+        showToast("Error al importar el archivo", "error");
       }
     };
     reader.readAsText(file, 'UTF-8');
@@ -306,13 +357,18 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row safe-area-bottom overflow-hidden">
-      <input 
-        type="file" 
-        ref={fileInputRef} 
-        className="hidden" 
-        accept="*/*" 
-        onChange={handleImportFile} 
+      {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
+      
+      <ConfirmModal 
+        isOpen={!!confirmConfig} 
+        onClose={() => setConfirmConfig(null)} 
+        onConfirm={confirmConfig?.onConfirm || (() => {})}
+        title={confirmConfig?.title || ""}
+        message={confirmConfig?.message || ""}
+        confirmText={confirmConfig?.confirmText}
       />
+
+      <input type="file" ref={fileInputRef} className="hidden" accept="*/*" onChange={handleImportFile} />
 
       {/* SIDEBAR */}
       {!isStudying && (
@@ -389,14 +445,24 @@ const App: React.FC = () => {
                         {decks.map(deck => {
                           const deckTotal = cards.filter(c => c.deckId === deck.id).length;
                           const dueCount = cards.filter(c => c.deckId === deck.id && c.nextReview <= Date.now()).length;
+                          const isExam = deck.settings?.strategy === 'exam';
                           return (
                             <div key={deck.id} className="p-6 bg-white rounded-[2.5rem] border border-slate-100 shadow-sm flex items-center gap-5 active:scale-[0.98] md:hover:scale-[1.02] transition-all cursor-pointer hover:border-indigo-100 group" onClick={() => { setSelectedDeckId(deck.id); setModalOpen('session_start'); }}>
-                              <div className={`w-14 h-14 rounded-2xl ${deck.color} flex items-center justify-center text-white font-black text-xl shadow-lg group-hover:rotate-6 transition-transform shrink-0`}>{deck.name[0]}</div>
-                              <div className="flex-1 overflow-hidden"><h4 className="font-bold text-slate-800 text-lg truncate leading-tight mb-1">{deck.name}</h4><div className="flex items-center gap-2"><span className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter bg-slate-50 px-2 py-0.5 rounded-md">{deckTotal} Tarjetas</span></div></div>
+                              <div className={`w-14 h-14 rounded-2xl ${deck.color} flex items-center justify-center text-white font-black text-xl shadow-lg group-hover:rotate-6 transition-transform shrink-0 relative`}>
+                                {deck.name[0]}
+                                {isExam && <div className="absolute -top-1 -right-1 w-6 h-6 bg-rose-500 rounded-full border-2 border-white flex items-center justify-center text-[10px] shadow-sm"><Zap size={10} fill="white" /></div>}
+                              </div>
+                              <div className="flex-1 overflow-hidden">
+                                <h4 className="font-bold text-slate-800 text-lg truncate leading-tight mb-1">{deck.name}</h4>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter bg-slate-50 px-2 py-0.5 rounded-md">{deckTotal} Tarjetas</span>
+                                  {isExam && <span className="text-[8px] font-black text-rose-500 uppercase tracking-widest bg-rose-50 px-2 py-0.5 rounded-md border border-rose-100">Intensivo</span>}
+                                </div>
+                              </div>
                               <div className="flex items-center gap-1">
                                 {dueCount > 0 && <div className="bg-rose-500 text-white text-[10px] font-black px-3 py-1 rounded-full shadow-lg shadow-rose-200 mr-2">{dueCount}</div>}
                                 <button type="button" onClick={(e) => { e.stopPropagation(); setDeckToExport(deck); setModalOpen('export_deck'); }} className="p-3 text-slate-200 hover:text-emerald-500 transition-colors md:opacity-0 group-hover:opacity-100"><Share2 size={18} /></button>
-                                <button type="button" onClick={(e) => { e.stopPropagation(); setSelectedDeckId(deck.id); setNewDeckName(deck.name); setNewDeckColor(deck.color); setModalOpen('deck_settings'); }} className="p-3 text-slate-200 hover:text-indigo-500 transition-colors md:opacity-0 group-hover:opacity-100"><Edit2 size={18} /></button>
+                                <button type="button" onClick={(e) => { e.stopPropagation(); setSelectedDeckId(deck.id); setNewDeckName(deck.name); setNewDeckColor(deck.color); setNewDeckStrategy(deck.settings?.strategy || 'standard'); setModalOpen('deck_settings'); }} className="p-3 text-slate-200 hover:text-indigo-500 transition-colors md:opacity-0 group-hover:opacity-100"><Edit2 size={18} /></button>
                               </div>
                             </div>
                           );
@@ -421,7 +487,7 @@ const App: React.FC = () => {
                         <div key={card.id} className="p-6 bg-white rounded-[2.5rem] border border-slate-100 flex flex-col gap-3 shadow-sm animate-in slide-in-from-bottom-2 md:hover:shadow-md transition-shadow">
                           <div className="flex justify-between items-center mb-1"><span className="text-[10px] font-black bg-indigo-50 text-indigo-500 px-3 py-1 rounded-full uppercase tracking-tight">{card.type}</span><div className="flex gap-4">
                             <button type="button" onClick={() => handleEditCard(card)} className="text-indigo-500 text-[11px] font-black uppercase flex items-center gap-1.5 hover:scale-105 transition-transform p-1"><Edit2 size={14} /> Editar</button>
-                            <button type="button" onClick={() => deleteCard(card.id)} className="text-rose-400 text-[11px] font-black uppercase flex items-center gap-1.5 hover:scale-105 transition-transform p-1"><Trash2 size={14} /> Borrar</button>
+                            <button type="button" onClick={() => deleteCardRequest(card.id)} className="text-rose-400 text-[11px] font-black uppercase flex items-center gap-1.5 hover:scale-105 transition-transform p-1"><Trash2 size={14} /> Borrar</button>
                           </div></div>
                           <p className="font-bold text-slate-800 text-lg leading-snug">{card.type === 'cloze' ? card.question.replace(/\{\{(.*?)\}\}/g, '$1') : card.question}</p>
                           <p className="text-slate-400 text-sm font-medium border-t border-slate-50 pt-3">{card.type === 'cloze' ? `Respuesta: ${card.answer}` : card.answer}</p>
@@ -503,6 +569,30 @@ const App: React.FC = () => {
             <input className="w-full p-4 rounded-2xl bg-slate-50 border-none text-lg font-black text-slate-800 focus:ring-2 focus:ring-indigo-100 outline-none shadow-inner" value={newDeckName} onChange={e => setNewDeckName(e.target.value)}/>
           </div>
           <div className="space-y-2">
+            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Estrategia de Estudio</label>
+            <div className="grid grid-cols-2 gap-3 p-1 bg-slate-100 rounded-2xl">
+              <button 
+                onClick={() => setNewDeckStrategy('standard')} 
+                className={`py-3 rounded-xl text-[10px] font-black transition-all flex flex-col items-center gap-1 ${newDeckStrategy === 'standard' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-400'}`}
+              >
+                <LibraryIcon size={14} />
+                ESTÁNDAR
+              </button>
+              <button 
+                onClick={() => setNewDeckStrategy('exam')} 
+                className={`py-3 rounded-xl text-[10px] font-black transition-all flex flex-col items-center gap-1 ${newDeckStrategy === 'exam' ? 'bg-white shadow-sm text-rose-600' : 'text-slate-400'}`}
+              >
+                <Zap size={14} />
+                MODO EXAMEN
+              </button>
+            </div>
+            <p className="px-2 text-[9px] text-slate-400 font-bold leading-tight">
+              {newDeckStrategy === 'exam' 
+                ? 'Intervalos cortos (1-4 días). Ideal para aprender mucho en 2 semanas.' 
+                : 'Intervalos crecientes. Ideal para retención a largo plazo (meses/años).'}
+            </p>
+          </div>
+          <div className="space-y-2">
             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Color</label>
             <div className="grid grid-cols-5 gap-3 pt-1">
                {['bg-indigo-500', 'bg-rose-500', 'bg-amber-500', 'bg-emerald-500', 'bg-slate-800'].map(color => (
@@ -512,13 +602,7 @@ const App: React.FC = () => {
           </div>
           <div className="flex flex-col gap-3 pt-6 border-t border-slate-50">
             <Button onClick={saveDeck} className="w-full py-4 text-xs font-black uppercase tracking-widest rounded-2xl">Guardar Cambios</Button>
-            <Button 
-              variant="danger" 
-              onClick={() => deleteDeck(selectedDeckId)} 
-              className="w-full py-4 rounded-2xl text-xs font-black uppercase tracking-widest"
-            >
-              Eliminar Mazo
-            </Button>
+            <Button variant="danger" onClick={() => deleteDeckRequest(selectedDeckId)} className="w-full py-4 rounded-2xl text-xs font-black uppercase tracking-widest">Eliminar Mazo</Button>
           </div>
         </div>
       </Modal>
